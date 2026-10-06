@@ -1,30 +1,35 @@
+
 from datetime import datetime, timedelta
 from pathlib import Path
 import sqlite3
 import os
 
+import bcrypt
 from fastapi import FastAPI, HTTPException, Depends
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
 from jose import jwt, JWTError
-from passlib.context import CryptContext
 from pydantic import BaseModel
 
 
-# =========================
+# =========================================================
 # CONFIGURATION
-# =========================
+# =========================================================
 
 BASE = Path(__file__).resolve().parent
 DB = BASE / "placement.db"
 
-SECRET = os.getenv("SECRET_KEY", "change-this-secret-before-production")
+SECRET = os.getenv(
+    "SECRET_KEY",
+    "placementhub-production-secret-change-this"
+)
+
 ALGORITHM = "HS256"
 
 
-# =========================
+# =========================================================
 # FASTAPI APP
-# =========================
+# =========================================================
 
 app = FastAPI(
     title="Placement & Interview Management API",
@@ -32,47 +37,68 @@ app = FastAPI(
 )
 
 
-# =========================
+# =========================================================
 # CORS
-# =========================
+# =========================================================
 
-FRONTEND_URL = os.getenv("FRONTEND_URL", "http://localhost:5173")
+FRONTEND_URL = os.getenv(
+    "FRONTEND_URL",
+    ""
+).strip().rstrip("/")
+
+allowed_origins = [
+    "http://localhost:5173",
+    "http://127.0.0.1:5173",
+]
+
+if FRONTEND_URL:
+    allowed_origins.append(FRONTEND_URL)
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        FRONTEND_URL,
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-    ],
+    allow_origins=allowed_origins,
     allow_credentials=True,
     allow_methods=["*"],
     allow_headers=["*"],
 )
 
 
-# =========================
+# =========================================================
 # AUTHENTICATION
-# =========================
-
-pwd = CryptContext(
-    schemes=["bcrypt"],
-    deprecated="auto"
-)
+# =========================================================
 
 oauth2 = OAuth2PasswordBearer(
     tokenUrl="/api/login"
 )
 
 
-# =========================
+# =========================================================
 # DATABASE
-# =========================
+# =========================================================
 
 def db():
     con = sqlite3.connect(DB)
     con.row_factory = sqlite3.Row
     return con
+
+
+def add_column_if_missing(
+    con,
+    table,
+    column,
+    definition
+):
+    columns = [
+        row["name"]
+        for row in con.execute(
+            f"PRAGMA table_info({table})"
+        ).fetchall()
+    ]
+
+    if column not in columns:
+        con.execute(
+            f"ALTER TABLE {table} ADD COLUMN {column} {definition}"
+        )
 
 
 def init_db():
@@ -115,6 +141,21 @@ def init_db():
         """
     )
 
+    # Add newer interview columns if an older database already exists.
+    add_column_if_missing(
+        con,
+        "interviews",
+        "meeting_link",
+        "TEXT DEFAULT ''"
+    )
+
+    add_column_if_missing(
+        con,
+        "interviews",
+        "notes",
+        "TEXT DEFAULT ''"
+    )
+
     con.commit()
     con.close()
 
@@ -122,9 +163,9 @@ def init_db():
 init_db()
 
 
-# =========================
+# =========================================================
 # PYDANTIC MODELS
-# =========================
+# =========================================================
 
 class Register(BaseModel):
     name: str
@@ -149,14 +190,17 @@ class InterviewCreate(BaseModel):
     interview_date: str
     interviewer: str
     mode: str = "Online"
+    meeting_link: str = ""
+    notes: str = ""
 
 
-# =========================
+# =========================================================
 # CURRENT USER
-# =========================
+# =========================================================
 
-def current_user(token: str = Depends(oauth2)):
-
+def current_user(
+    token: str = Depends(oauth2)
+):
     try:
         payload = jwt.decode(
             token,
@@ -190,34 +234,46 @@ def current_user(token: str = Depends(oauth2)):
         return dict(user)
 
     except (JWTError, ValueError):
-
         raise HTTPException(
             status_code=401,
             detail="Invalid token"
         )
 
 
-# =========================
+# =========================================================
+# ROOT
+# =========================================================
+
+@app.get("/")
+def root():
+    return {
+        "message": "PlacementHub Backend API is running",
+        "health": "/api/health"
+    }
+
+
+# =========================================================
 # HEALTH CHECK
-# =========================
+# =========================================================
 
 @app.get("/api/health")
 def health():
-
     return {
         "status": "ok",
         "service": "placement-interview-management"
     }
 
 
-# =========================
+# =========================================================
 # REGISTER
-# =========================
+# =========================================================
 
 @app.post("/api/register")
 def register(data: Register):
 
-    role = data.role.lower()
+    role = data.role.lower().strip()
+    email = data.email.lower().strip()
+    name = data.name.strip()
 
     if role not in {
         "student",
@@ -229,9 +285,44 @@ def register(data: Register):
             detail="Invalid role"
         )
 
+    if not name:
+        raise HTTPException(
+            status_code=400,
+            detail="Name is required"
+        )
+
+    if not email:
+        raise HTTPException(
+            status_code=400,
+            detail="Email is required"
+        )
+
+    if len(data.password) < 6:
+        raise HTTPException(
+            status_code=400,
+            detail="Password must contain at least 6 characters"
+        )
+
     con = db()
 
     try:
+        # Check existing email first.
+        existing = con.execute(
+            "SELECT id FROM users WHERE email=?",
+            (email,)
+        ).fetchone()
+
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail="Email already registered"
+            )
+
+        # Hash password using bcrypt directly.
+        hashed_password = bcrypt.hashpw(
+            data.password.encode("utf-8"),
+            bcrypt.gensalt()
+        ).decode("utf-8")
 
         cur = con.execute(
             """
@@ -244,9 +335,9 @@ def register(data: Register):
             VALUES(?,?,?,?)
             """,
             (
-                data.name,
-                data.email.lower(),
-                pwd.hash(data.password),
+                name,
+                email,
+                hashed_password,
                 role
             )
         )
@@ -258,21 +349,30 @@ def register(data: Register):
             "id": cur.lastrowid
         }
 
-    except sqlite3.IntegrityError:
+    except HTTPException:
+        raise
 
+    except sqlite3.IntegrityError:
         raise HTTPException(
             status_code=409,
             detail="Email already registered"
         )
 
-    finally:
+    except Exception as e:
+        print("REGISTRATION ERROR:", repr(e))
 
+        raise HTTPException(
+            status_code=500,
+            detail="Registration failed"
+        )
+
+    finally:
         con.close()
 
 
-# =========================
+# =========================================================
 # LOGIN
-# =========================
+# =========================================================
 
 @app.post("/api/login")
 def login(
@@ -283,16 +383,26 @@ def login(
 
     user = con.execute(
         "SELECT * FROM users WHERE email=?",
-        (form.username.lower(),)
+        (form.username.lower().strip(),)
     ).fetchone()
 
     con.close()
 
-    if not user or not pwd.verify(
-        form.password,
-        user["password"]
-    ):
+    if not user:
+        raise HTTPException(
+            status_code=401,
+            detail="Incorrect email or password"
+        )
 
+    try:
+        password_valid = bcrypt.checkpw(
+            form.password.encode("utf-8"),
+            user["password"].encode("utf-8")
+        )
+    except Exception:
+        password_valid = False
+
+    if not password_valid:
         raise HTTPException(
             status_code=401,
             detail="Incorrect email or password"
@@ -301,8 +411,7 @@ def login(
     token = jwt.encode(
         {
             "sub": str(user["id"]),
-            "exp": datetime.utcnow()
-            + timedelta(hours=8)
+            "exp": datetime.utcnow() + timedelta(hours=8)
         },
         SECRET,
         algorithm=ALGORITHM
@@ -320,9 +429,9 @@ def login(
     }
 
 
-# =========================
+# =========================================================
 # USER PROFILE
-# =========================
+# =========================================================
 
 @app.get("/api/me")
 def me(
@@ -337,9 +446,9 @@ def me(
     }
 
 
-# =========================
+# =========================================================
 # CREATE JOB
-# =========================
+# =========================================================
 
 @app.post("/api/jobs")
 def create_job(
@@ -351,7 +460,6 @@ def create_job(
         "recruiter",
         "admin"
     }:
-
         raise HTTPException(
             status_code=403,
             detail="Recruiter/admin access required"
@@ -359,38 +467,41 @@ def create_job(
 
     con = db()
 
-    cur = con.execute(
-        """
-        INSERT INTO jobs(
-            title,
-            company,
-            location,
-            description,
-            posted_by
+    try:
+        cur = con.execute(
+            """
+            INSERT INTO jobs(
+                title,
+                company,
+                location,
+                description,
+                posted_by
+            )
+            VALUES(?,?,?,?,?)
+            """,
+            (
+                data.title.strip(),
+                data.company.strip(),
+                data.location.strip(),
+                data.description.strip(),
+                user["id"]
+            )
         )
-        VALUES(?,?,?,?,?)
-        """,
-        (
-            data.title,
-            data.company,
-            data.location,
-            data.description,
-            user["id"]
-        )
-    )
 
-    con.commit()
-    con.close()
+        con.commit()
 
-    return {
-        "message": "Job created",
-        "id": cur.lastrowid
-    }
+        return {
+            "message": "Job created",
+            "id": cur.lastrowid
+        }
+
+    finally:
+        con.close()
 
 
-# =========================
+# =========================================================
 # GET JOBS
-# =========================
+# =========================================================
 
 @app.get("/api/jobs")
 def jobs(
@@ -399,25 +510,27 @@ def jobs(
 
     con = db()
 
-    rows = con.execute(
-        """
-        SELECT *
-        FROM jobs
-        ORDER BY id DESC
-        """
-    ).fetchall()
+    try:
+        rows = con.execute(
+            """
+            SELECT *
+            FROM jobs
+            ORDER BY id DESC
+            """
+        ).fetchall()
 
-    con.close()
+        return [
+            dict(row)
+            for row in rows
+        ]
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+    finally:
+        con.close()
 
 
-# =========================
+# =========================================================
 # APPLY FOR JOB
-# =========================
+# =========================================================
 
 @app.post("/api/applications")
 def apply(
@@ -426,7 +539,6 @@ def apply(
 ):
 
     if user["role"] != "student":
-
         raise HTTPException(
             status_code=403,
             detail="Student access required"
@@ -434,21 +546,35 @@ def apply(
 
     con = db()
 
-    job = con.execute(
-        "SELECT id FROM jobs WHERE id=?",
-        (data.job_id,)
-    ).fetchone()
-
-    if not job:
-
-        con.close()
-
-        raise HTTPException(
-            status_code=404,
-            detail="Job not found"
-        )
-
     try:
+        job = con.execute(
+            "SELECT id FROM jobs WHERE id=?",
+            (data.job_id,)
+        ).fetchone()
+
+        if not job:
+            raise HTTPException(
+                status_code=404,
+                detail="Job not found"
+            )
+
+        existing = con.execute(
+            """
+            SELECT id
+            FROM applications
+            WHERE job_id=? AND student_id=?
+            """,
+            (
+                data.job_id,
+                user["id"]
+            )
+        ).fetchone()
+
+        if existing:
+            raise HTTPException(
+                status_code=409,
+                detail="You have already applied for this job"
+            )
 
         cur = con.execute(
             """
@@ -471,21 +597,13 @@ def apply(
             "id": cur.lastrowid
         }
 
-    except sqlite3.IntegrityError:
-
-        raise HTTPException(
-            status_code=409,
-            detail="Could not submit application"
-        )
-
     finally:
-
         con.close()
 
 
-# =========================
+# =========================================================
 # GET APPLICATIONS
-# =========================
+# =========================================================
 
 @app.get("/api/applications")
 def applications(
@@ -494,55 +612,57 @@ def applications(
 
     con = db()
 
-    if user["role"] == "student":
+    try:
+        if user["role"] == "student":
 
-        rows = con.execute(
-            """
-            SELECT
-                a.*,
-                j.title,
-                j.company,
-                u.name AS student_name
-            FROM applications a
-            JOIN jobs j
-                ON a.job_id = j.id
-            JOIN users u
-                ON a.student_id = u.id
-            WHERE a.student_id=?
-            ORDER BY a.id DESC
-            """,
-            (user["id"],)
-        ).fetchall()
+            rows = con.execute(
+                """
+                SELECT
+                    a.*,
+                    j.title,
+                    j.company,
+                    u.name AS student_name
+                FROM applications a
+                JOIN jobs j
+                    ON a.job_id = j.id
+                JOIN users u
+                    ON a.student_id = u.id
+                WHERE a.student_id=?
+                ORDER BY a.id DESC
+                """,
+                (user["id"],)
+            ).fetchall()
 
-    else:
+        else:
 
-        rows = con.execute(
-            """
-            SELECT
-                a.*,
-                j.title,
-                j.company,
-                u.name AS student_name
-            FROM applications a
-            JOIN jobs j
-                ON a.job_id = j.id
-            JOIN users u
-                ON a.student_id = u.id
-            ORDER BY a.id DESC
-            """
-        ).fetchall()
+            rows = con.execute(
+                """
+                SELECT
+                    a.*,
+                    j.title,
+                    j.company,
+                    u.name AS student_name
+                FROM applications a
+                JOIN jobs j
+                    ON a.job_id = j.id
+                JOIN users u
+                    ON a.student_id = u.id
+                ORDER BY a.id DESC
+                """
+            ).fetchall()
 
-    con.close()
+        return [
+            dict(row)
+            for row in rows
+        ]
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+    finally:
+        con.close()
 
 
-# =========================
+# =========================================================
 # UPDATE APPLICATION STATUS
-# =========================
+# =========================================================
 
 @app.patch("/api/applications/{application_id}/status")
 def update_status(
@@ -555,7 +675,6 @@ def update_status(
         "recruiter",
         "admin"
     }:
-
         raise HTTPException(
             status_code=403,
             detail="Recruiter/admin access required"
@@ -569,7 +688,6 @@ def update_status(
     }
 
     if status not in allowed:
-
         raise HTTPException(
             status_code=400,
             detail="Invalid status"
@@ -577,38 +695,38 @@ def update_status(
 
     con = db()
 
-    result = con.execute(
-        """
-        UPDATE applications
-        SET status=?
-        WHERE id=?
-        """,
-        (
-            status,
-            application_id
+    try:
+        result = con.execute(
+            """
+            UPDATE applications
+            SET status=?
+            WHERE id=?
+            """,
+            (
+                status,
+                application_id
+            )
         )
-    )
 
-    if result.rowcount == 0:
+        if result.rowcount == 0:
+            raise HTTPException(
+                status_code=404,
+                detail="Application not found"
+            )
 
+        con.commit()
+
+        return {
+            "message": "Status updated"
+        }
+
+    finally:
         con.close()
 
-        raise HTTPException(
-            status_code=404,
-            detail="Application not found"
-        )
 
-    con.commit()
-    con.close()
-
-    return {
-        "message": "Status updated"
-    }
-
-
-# =========================
+# =========================================================
 # CREATE INTERVIEW
-# =========================
+# =========================================================
 
 @app.post("/api/interviews")
 def create_interview(
@@ -620,7 +738,6 @@ def create_interview(
         "recruiter",
         "admin"
     }:
-
         raise HTTPException(
             status_code=403,
             detail="Recruiter/admin access required"
@@ -628,63 +745,67 @@ def create_interview(
 
     con = db()
 
-    application = con.execute(
-        """
-        SELECT id
-        FROM applications
-        WHERE id=?
-        """,
-        (data.application_id,)
-    ).fetchone()
+    try:
+        application = con.execute(
+            """
+            SELECT id
+            FROM applications
+            WHERE id=?
+            """,
+            (data.application_id,)
+        ).fetchone()
 
-    if not application:
+        if not application:
+            raise HTTPException(
+                status_code=404,
+                detail="Application not found"
+            )
 
+        cur = con.execute(
+            """
+            INSERT INTO interviews(
+                application_id,
+                interview_date,
+                interviewer,
+                mode,
+                meeting_link,
+                notes
+            )
+            VALUES(?,?,?,?,?,?)
+            """,
+            (
+                data.application_id,
+                data.interview_date,
+                data.interviewer,
+                data.mode,
+                data.meeting_link,
+                data.notes
+            )
+        )
+
+        con.execute(
+            """
+            UPDATE applications
+            SET status='Shortlisted'
+            WHERE id=?
+            """,
+            (data.application_id,)
+        )
+
+        con.commit()
+
+        return {
+            "message": "Interview scheduled",
+            "id": cur.lastrowid
+        }
+
+    finally:
         con.close()
 
-        raise HTTPException(
-            status_code=404,
-            detail="Application not found"
-        )
 
-    cur = con.execute(
-        """
-        INSERT INTO interviews(
-            application_id,
-            interview_date,
-            interviewer,
-            mode
-        )
-        VALUES(?,?,?,?)
-        """,
-        (
-            data.application_id,
-            data.interview_date,
-            data.interviewer,
-            data.mode
-        )
-    )
-
-    con.execute(
-        """
-        UPDATE applications
-        SET status='Shortlisted'
-        WHERE id=?
-        """,
-        (data.application_id,)
-    )
-
-    con.commit()
-    con.close()
-
-    return {
-        "message": "Interview scheduled",
-        "id": cur.lastrowid
-    }
-
-
-# =========================
+# =========================================================
 # GET INTERVIEWS
-# =========================
+# =========================================================
 
 @app.get("/api/interviews")
 def interviews(
@@ -693,36 +814,38 @@ def interviews(
 
     con = db()
 
-    rows = con.execute(
-        """
-        SELECT
-            i.*,
-            a.status,
-            j.title,
-            j.company,
-            u.name AS student_name
-        FROM interviews i
-        JOIN applications a
-            ON i.application_id = a.id
-        JOIN jobs j
-            ON a.job_id = j.id
-        JOIN users u
-            ON a.student_id = u.id
-        ORDER BY i.interview_date
-        """
-    ).fetchall()
+    try:
+        rows = con.execute(
+            """
+            SELECT
+                i.*,
+                a.status,
+                j.title,
+                j.company,
+                u.name AS student_name
+            FROM interviews i
+            JOIN applications a
+                ON i.application_id = a.id
+            JOIN jobs j
+                ON a.job_id = j.id
+            JOIN users u
+                ON a.student_id = u.id
+            ORDER BY i.interview_date
+            """
+        ).fetchall()
 
-    con.close()
+        return [
+            dict(row)
+            for row in rows
+        ]
 
-    return [
-        dict(row)
-        for row in rows
-    ]
+    finally:
+        con.close()
 
 
-# =========================
+# =========================================================
 # DASHBOARD
-# =========================
+# =========================================================
 
 @app.get("/api/dashboard")
 def dashboard(
@@ -731,29 +854,31 @@ def dashboard(
 
     con = db()
 
-    stats = {
+    try:
+        stats = {
+            "jobs": con.execute(
+                "SELECT COUNT(*) FROM jobs"
+            ).fetchone()[0],
 
-        "jobs": con.execute(
-            "SELECT COUNT(*) FROM jobs"
-        ).fetchone()[0],
+            "applications": con.execute(
+                "SELECT COUNT(*) FROM applications"
+            ).fetchone()[0],
 
-        "applications": con.execute(
-            "SELECT COUNT(*) FROM applications"
-        ).fetchone()[0],
+            "interviews": con.execute(
+                "SELECT COUNT(*) FROM interviews"
+            ).fetchone()[0],
 
-        "interviews": con.execute(
-            "SELECT COUNT(*) FROM interviews"
-        ).fetchone()[0],
+            "selected": con.execute(
+                """
+                SELECT COUNT(*)
+                FROM applications
+                WHERE status='Selected'
+                """
+            ).fetchone()[0]
+        }
 
-        "selected": con.execute(
-            """
-            SELECT COUNT(*)
-            FROM applications
-            WHERE status='Selected'
-            """
-        ).fetchone()[0]
-    }
+        return stats
 
-    con.close()
+    finally:
+        con.close()
 
-    return stats
