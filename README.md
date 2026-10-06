@@ -57,7 +57,32 @@ git push -u origin main
 ```
 
 ## Deployment
-Deploy the backend and frontend separately on Render, or serve the compiled frontend through a production web server.
 
-## Demo Login
-After starting the backend, use the registration screen to create a local account. This repository intentionally does not include real passwords or credentials.
+The PlacementHub frontend and backend are deployed separately on Render.
+
+### Live Demo
+
+**Frontend:**
+https://placementhub-frontend-uu1q.onrender.com
+
+**Backend API:**
+https://placementhub-backend-x16w.onrender.com
+
+**API Documentation (Swagger):**
+https://placementhub-backend-x16w.onrender.com/docs
+
+### Demo Login
+
+For security, this repository does not contain passwords or private credentials.
+
+You can register a new Student or Recruiter account directly from the live application and use the system.
+
+### Demo Workflow
+
+1. Register/Login as a Recruiter.
+2. Create a job.
+3. Register/Login as a Student.
+4. Apply for the job.
+5. Login as Recruiter and shortlist the applicant.
+6. Schedule an interview.
+7. Login as Student and view the scheduled interview.
