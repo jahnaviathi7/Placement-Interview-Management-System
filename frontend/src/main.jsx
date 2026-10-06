@@ -1,11 +1,9 @@
-
 import React, { useEffect, useMemo, useState } from "react";
 import { createRoot } from "react-dom/client";
 import "./style.css";
 
-// LOCAL DEVELOPMENT API
-// After backend deployment, replace this with your Render backend URL.
-const API = "http://127.0.0.1:8000/api";
+// DEPLOYED RENDER BACKEND
+const API = "https://placementhub-backend-x16w.onrender.com/api";
 
 function App() {
   const [token, setToken] = useState(localStorage.getItem("token") || "");
@@ -16,6 +14,7 @@ function App() {
   const [jobs, setJobs] = useState([]);
   const [applications, setApplications] = useState([]);
   const [interviews, setInterviews] = useState([]);
+
   const [stats, setStats] = useState({
     jobs: 0,
     applications: 0,
@@ -77,6 +76,7 @@ function App() {
     const text = await response.text();
 
     let data = {};
+
     try {
       data = text ? JSON.parse(text) : {};
     } catch {
@@ -85,7 +85,9 @@ function App() {
 
     if (!response.ok) {
       throw new Error(
-        data?.detail || data?.message || `Request failed (${response.status})`
+        data?.detail ||
+          data?.message ||
+          `Request failed (${response.status})`
       );
     }
 
@@ -170,6 +172,7 @@ function App() {
 
     try {
       const form = new URLSearchParams();
+
       form.append("username", auth.email);
       form.append("password", auth.password);
 
@@ -319,6 +322,7 @@ function App() {
     setJobs([]);
     setApplications([]);
     setInterviews([]);
+
     setStats({
       jobs: 0,
       applications: 0,
@@ -329,10 +333,9 @@ function App() {
 
   const filteredJobs = useMemo(() => {
     return jobs.filter((job) => {
-      const text =
-        `${job.title || ""} ${job.company || ""} ${
-          job.description || ""
-        }`.toLowerCase();
+      const text = `${job.title || ""} ${job.company || ""} ${
+        job.description || ""
+      }`.toLowerCase();
 
       const location = (job.location || "").toLowerCase();
 
@@ -409,7 +412,10 @@ function App() {
             </p>
           </div>
 
-          {message && <div className="alert success">{message}</div>}
+          {message && (
+            <div className="alert success">{message}</div>
+          )}
+
           {error && <div className="alert error">{error}</div>}
 
           <form
@@ -419,12 +425,16 @@ function App() {
             {mode === "register" && (
               <div className="form-group">
                 <label>Full Name</label>
+
                 <input
                   type="text"
                   placeholder="Enter your full name"
                   value={auth.name}
                   onChange={(e) =>
-                    setAuth({ ...auth, name: e.target.value })
+                    setAuth({
+                      ...auth,
+                      name: e.target.value,
+                    })
                   }
                   required
                 />
@@ -433,12 +443,16 @@ function App() {
 
             <div className="form-group">
               <label>Email Address</label>
+
               <input
                 type="email"
                 placeholder="Enter your email"
                 value={auth.email}
                 onChange={(e) =>
-                  setAuth({ ...auth, email: e.target.value })
+                  setAuth({
+                    ...auth,
+                    email: e.target.value,
+                  })
                 }
                 required
               />
@@ -446,12 +460,16 @@ function App() {
 
             <div className="form-group">
               <label>Password</label>
+
               <input
                 type="password"
                 placeholder="Enter your password"
                 value={auth.password}
                 onChange={(e) =>
-                  setAuth({ ...auth, password: e.target.value })
+                  setAuth({
+                    ...auth,
+                    password: e.target.value,
+                  })
                 }
                 required
               />
@@ -464,7 +482,10 @@ function App() {
                 <select
                   value={auth.role}
                   onChange={(e) =>
-                    setAuth({ ...auth, role: e.target.value })
+                    setAuth({
+                      ...auth,
+                      role: e.target.value,
+                    })
                   }
                 >
                   <option value="student">Student</option>
@@ -490,14 +511,28 @@ function App() {
             {mode === "login" ? (
               <>
                 Don't have an account?
-                <button onClick={() => setMode("register")}>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMessages();
+                    setMode("register");
+                  }}
+                >
                   Create Account
                 </button>
               </>
             ) : (
               <>
                 Already have an account?
-                <button onClick={() => setMode("login")}>
+
+                <button
+                  type="button"
+                  onClick={() => {
+                    clearMessages();
+                    setMode("login");
+                  }}
+                >
                   Login
                 </button>
               </>
@@ -518,6 +553,7 @@ function App() {
 
           <div>
             <div className="nav-title">PlacementHub</div>
+
             <div className="nav-subtitle">
               CAREER MANAGEMENT SYSTEM
             </div>
@@ -556,6 +592,7 @@ function App() {
             <div>
               <h3>{user?.name}</h3>
               <p>{user?.email}</p>
+
               <span className="profile-role">
                 {user?.role}
               </span>
@@ -647,6 +684,7 @@ function App() {
               <div className="form-grid">
                 <div className="form-group">
                   <label>Job Title</label>
+
                   <input
                     value={jobForm.title}
                     onChange={(e) =>
@@ -662,6 +700,7 @@ function App() {
 
                 <div className="form-group">
                   <label>Company</label>
+
                   <input
                     value={jobForm.company}
                     onChange={(e) =>
@@ -677,6 +716,7 @@ function App() {
 
                 <div className="form-group">
                   <label>Location</label>
+
                   <input
                     value={jobForm.location}
                     onChange={(e) =>
@@ -692,6 +732,7 @@ function App() {
 
                 <div className="form-group form-full">
                   <label>Job Description</label>
+
                   <textarea
                     rows="4"
                     value={jobForm.description}
@@ -778,7 +819,10 @@ function App() {
           ) : (
             <div className="jobs-grid">
               {filteredJobs.map((job) => (
-                <article className="job-card glass-card" key={job.id}>
+                <article
+                  className="job-card glass-card"
+                  key={job.id}
+                >
                   <div className="job-top">
                     <span className="job-type">OPEN ROLE</span>
 
@@ -943,16 +987,18 @@ function App() {
                       Select shortlisted application
                     </option>
 
-                    {shortlistedApplications.map((application) => (
-                      <option
-                        key={application.id}
-                        value={application.id}
-                      >
-                        {application.student_name} —{" "}
-                        {application.job_title} —{" "}
-                        {application.company}
-                      </option>
-                    ))}
+                    {shortlistedApplications.map(
+                      (application) => (
+                        <option
+                          key={application.id}
+                          value={application.id}
+                        >
+                          {application.student_name} —{" "}
+                          {application.job_title} —{" "}
+                          {application.company}
+                        </option>
+                      )
+                    )}
                   </select>
                 </div>
 
@@ -1072,6 +1118,7 @@ function App() {
                 >
                   <div className="interview-date">
                     <span>DATE</span>
+
                     <strong>
                       {formatDate(interview.interview_date)}
                     </strong>
@@ -1154,4 +1201,3 @@ createRoot(document.getElementById("root")).render(
     <App />
   </React.StrictMode>
 );
-
